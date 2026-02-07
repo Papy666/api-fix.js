@@ -37,15 +37,15 @@ function isSafe(original, corrected) {
 }
 
 async function meaningAudit(original, corrected, lang) {
-  const resp = await client.responses.create({
+  const audit = await client.chat.completions.create({
     model: "gpt-4.1-mini",
     temperature: 0,
-    input: [
+    messages: [
       {
         role: "system",
         content:
           "You are a strict semantic auditor. Answer ONLY 'YES' or 'NO'. " +
-          "YES only if the meaning is strictly identical. NO if any meaning changed."
+          "YES only if meaning is strictly identical. NO if any meaning changed."
       },
       {
         role: "user",
@@ -56,8 +56,8 @@ async function meaningAudit(original, corrected, lang) {
     ]
   });
 
-  const a = (resp.output_text || "").trim().toUpperCase();
-  return a.startsWith("YES");
+  const out = (audit.choices?.[0]?.message?.content || "").trim().toUpperCase();
+  return out.startsWith("YES");
 }
 
 export default async function handler(req, res) {
@@ -84,31 +84,45 @@ Rules:
 - Do NOT change meaning.
 - Do NOT rewrite or paraphrase.
 - You MAY fix obvious typos even inside informal text.
-- Keep slang/abbreviations as-is.
+- Keep slang/abbreviations as-is (e.g., "g pa", "tps", "stp"). Do NOT expand them.
 - Keep names, numbers, emails, URLs, @handles unchanged.
 Return ONLY the corrected text.
 `.trim();
 
-    const user = `Language: ${language}\nText:\n${input}`;
-
-    const resp = await client.responses.create({
+    const completion = await client.chat.completions.create({
       model: "gpt-4.1-mini",
-      input: [
+      temperature: 0,
+      messages: [
         { role: "system", content: system },
-        { role: "user", content: user }
-      ],
-      temperature: 0
+        { role: "user", content: `Language: ${language}\nText:\n${input}` }
+      ]
     });
 
-    const out = (resp.output_text || "").trim();
+    const out = (completion.choices?.[0]?.message?.content || "").trim();
 
     if (!out) {
       res.status(200).json({ text: input, blocked: true, reason: "empty_output" });
       return;
     }
 
-    // semantic audit
-    // TEMP DEBUG — bypass filters
-	res.status(200).json({ text: out, blocked: false });
-	return;
+    const okMeaning = await meaningAudit(input, out, language);
+    if (!okMeaning) {
+      res.status(200).json({ text: input, blocked: true, reason: "meaning_changed" });
+      return;
+    }
 
+    if (!isSafe(input, out)) {
+      res.status(200).json({ text: input, blocked: true, reason: "safety_filter" });
+      return;
+    }
+
+    res.status(200).json({ text: out, blocked: false });
+  } catch (e) {
+    // On répond quand même en 200 pour éviter de casser le client
+    res.status(200).json({
+      text: (req.body && req.body.text) ? String(req.body.text) : "",
+      blocked: true,
+      reason: "exception"
+    });
+  }
+}
