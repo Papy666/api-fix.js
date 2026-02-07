@@ -34,7 +34,7 @@ export default async function handler(req, res) {
       "Keep slang/abbreviations as-is. Return ONLY the corrected text.";
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
+      model: "gpt-4o-mini",
       temperature: 0,
       messages: [
         { role: "system", content: system },
