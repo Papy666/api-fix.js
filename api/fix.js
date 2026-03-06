@@ -25,9 +25,11 @@ function buildSystemPrompt(mode = "cor", tone = "default") {
     "Do not paraphrase unnecessarily, but do not leave obvious mistakes uncorrected.",
     "Keep the same meaning and roughly the same register.",
     "Slang may remain informal, but spelling and punctuation errors must still be corrected.",
+    "Do not invent emphasis, questions, or exclamations that are not clearly present in the original text.",
+    "Do not turn informal discourse markers into questions unless the sentence is clearly interrogative.",
     "Return ONLY the corrected text."
   ].join(" ");
-}
+  }
 
 function buildUserPrompt({ text, lang, mode, tone }) {
   return [
