@@ -6,6 +6,10 @@ function getClient() {
   return new OpenAI({ apiKey: key });
 }
 
+/* ---------------------------------- */
+/*  Utilities */
+/* ---------------------------------- */
+
 function extractNumbers(text = "") {
   return (text.match(/\b\d+[a-zA-Z]*\b/g) || []).sort();
 }
@@ -13,12 +17,62 @@ function extractNumbers(text = "") {
 function numbersChanged(a, b) {
   const na = extractNumbers(a);
   const nb = extractNumbers(b);
+
   if (na.length !== nb.length) return true;
+
   for (let i = 0; i < na.length; i++) {
     if (na[i] !== nb[i]) return true;
   }
+
   return false;
 }
+
+function tooDifferent(a = "", b = "") {
+  const la = a.length;
+  const lb = b.length;
+
+  if (!la || !lb) return false;
+
+  const diff = Math.abs(lb - la) / la;
+
+  return diff > 0.35;
+}
+
+/* ---------------------------------- */
+/*  Token protection */
+/* ---------------------------------- */
+
+function protectTokens(text = "") {
+
+  const map = {};
+  let i = 0;
+
+  const protectedText = text.replace(
+    /\b([A-Z]{2,}|\d+[a-zA-Z]*|[A-Za-z]*\d+[A-Za-z0-9-]*)\b/g,
+    (match) => {
+      const key = `__GLTOK${i++}__`;
+      map[key] = match;
+      return key;
+    }
+  );
+
+  return { protectedText, map };
+}
+
+function restoreTokens(text = "", map = {}) {
+
+  let out = text;
+
+  for (const key in map) {
+    out = out.replaceAll(key, map[key]);
+  }
+
+  return out;
+}
+
+/* ---------------------------------- */
+/*  Prompt builders */
+/* ---------------------------------- */
 
 function buildSystemPrompt(mode = "cor", tone = "default") {
 
@@ -26,14 +80,13 @@ function buildSystemPrompt(mode = "cor", tone = "default") {
     return [
       "You are Greenlight in OPT mode.",
       "Rewrite the text to improve clarity, fluency, professionalism, and impact.",
-      "Preserve the original intent and core meaning.",
-      "Fix spelling, grammar, punctuation, accents, apostrophes, and typography.",
-      "Adapt tone according to the requested tone.",
+      "Preserve the original meaning and intent.",
+      "Fix spelling, grammar, punctuation, accents, and typography.",
       "",
       "Rules:",
       "- Do not introduce new information.",
-      "- Do not change factual elements such as numbers, codes, model names, or product names.",
-      "- Keep the same meaning.",
+      "- Do not modify numbers, product names, or technical identifiers.",
+      "- Maintain the same factual meaning.",
       "",
       "Return ONLY the rewritten text."
     ].join(" ");
@@ -41,9 +94,9 @@ function buildSystemPrompt(mode = "cor", tone = "default") {
 
   return [
     "You are Greenlight in COR mode.",
-    "You are a STRICT text correction engine.",
+    "You are a strict text correction engine.",
     "",
-    "Your task is ONLY to correct:",
+    "Your task is to correct:",
     "- spelling",
     "- grammar",
     "- punctuation",
@@ -52,49 +105,42 @@ function buildSystemPrompt(mode = "cor", tone = "default") {
     "- capitalization",
     "- spacing and typography",
     "",
-    "ABSOLUTE RULES:",
+    "Rules:",
+    "- Preserve the meaning.",
+    "- Do not paraphrase unnecessarily.",
+    "- Do not replace words with synonyms unless required for grammar.",
+    "- Do not interpret unclear tokens.",
     "",
-    "1. NEVER change the meaning.",
-    "2. NEVER paraphrase or rewrite the sentence.",
-    "3. NEVER replace words with synonyms.",
-    "4. NEVER interpret unclear tokens.",
-    "",
-    "IMPORTANT:",
-    "",
-    "Do NOT modify:",
-    "- numbers (530, 2024, 3.5)",
-    "- model names (BMW 530, RTX4090)",
-    "- technical tokens (USB-C, API, SQL)",
-    "- product names",
-    "- unknown identifiers",
+    "Important:",
+    "- Never modify numbers.",
+    "- Never modify model names or product identifiers.",
+    "- Never modify technical tokens (API, USB-C, RTX4090, etc).",
     "",
     "If something is unclear, leave it unchanged.",
-    "",
-    "You must preserve:",
-    "- the same structure",
-    "- the same words whenever possible",
-    "- the same sentence order",
-    "",
-    "Only fix objective mistakes.",
     "",
     "Return ONLY the corrected text."
   ].join(" ");
 }
 
 function buildUserPrompt({ text, lang, mode, tone }) {
+
   return [
     `Mode: ${mode || "cor"}`,
     `Tone: ${tone || "default"}`,
     `Language: ${lang || "auto"}`,
     "",
     "Task:",
-    "Return only the final corrected or optimized text.",
-    "Do not add explanations.",
+    "Return only the corrected or optimized text.",
+    "Do not include explanations.",
     "",
     "Text:",
     String(text || "")
   ].join("\n");
 }
+
+/* ---------------------------------- */
+/*  Handler */
+/* ---------------------------------- */
 
 export default async function handler(req, res) {
 
@@ -111,7 +157,10 @@ export default async function handler(req, res) {
   const currentTone = (tone ?? "default").toString();
 
   if (!input.trim()) {
-    res.status(200).json({ text: input, blocked: false });
+    res.status(200).json({
+      text: input,
+      blocked: false
+    });
     return;
   }
 
@@ -128,14 +177,24 @@ export default async function handler(req, res) {
 
   try {
 
+    /* ------------------------------- */
+    /* Protect sensitive tokens */
+    /* ------------------------------- */
+
+    const { protectedText, map } = protectTokens(input);
+
     const system = buildSystemPrompt(currentMode, currentTone);
 
     const user = buildUserPrompt({
-      text: input,
+      text: protectedText,
       lang: language,
       mode: currentMode,
       tone: currentTone
     });
+
+    /* ------------------------------- */
+    /* Call LLM */
+    /* ------------------------------- */
 
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
@@ -147,7 +206,7 @@ export default async function handler(req, res) {
       ]
     });
 
-    const out = (completion.choices?.[0]?.message?.content || "").trim();
+    let out = (completion.choices?.[0]?.message?.content || "").trim();
 
     if (!out) {
       res.status(200).json({
@@ -158,7 +217,16 @@ export default async function handler(req, res) {
       return;
     }
 
-    // garde-fou critique : nombres modifiés
+    /* ------------------------------- */
+    /* Restore tokens */
+    /* ------------------------------- */
+
+    out = restoreTokens(out, map);
+
+    /* ------------------------------- */
+    /* Safety checks */
+    /* ------------------------------- */
+
     if (numbersChanged(input, out)) {
       res.status(200).json({
         text: input,
@@ -168,12 +236,32 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (tooDifferent(input, out)) {
+      res.status(200).json({
+        text: input,
+        blocked: true,
+        reason: "excessive_change"
+      });
+      return;
+    }
+
+    /* ------------------------------- */
+    /* Debug log (optional) */
+    /* ------------------------------- */
+
+    console.log("GL FIX", {
+      input,
+      output: out
+    });
+
     res.status(200).json({
       text: out,
       blocked: false
     });
 
   } catch (e) {
+
+    console.error("GL FIX ERROR", e);
 
     res.status(200).json({
       text: input,
