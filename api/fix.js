@@ -163,7 +163,7 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
       "- Do not modify numbers, product names, model names, or technical identifiers.",
       "- Preserve the original intent.",
       "- Keep the output directly usable by the user.",
-      "- Prefer strong wording differences only when they match the selected tone.",
+      "- The selected tone must create a clearly noticeable stylistic difference in the output.",
       "",
       buildOptToneInstructions(tone),
       "",
