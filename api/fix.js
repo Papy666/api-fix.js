@@ -108,21 +108,24 @@ function buildOptToneInstructions(tone = "neutral") {
     case "professional":
       return [
         "Tone style: professional.",
-        "Rewrite in a polished, professional, credible, and well-structured way.",
-        "Use clean phrasing and appropriate business-style wording when relevant.",
-        "You may split the text into short paragraphs if that improves readability.",
-        "Keep the message respectful and serious.",
-        "Do not sound stiff, robotic, overly legal, or theatrical."
+        "Rewrite in a polished, structured, professional, and credible tone.",
+        "Use clear, well-formed sentences and appropriate business wording.",
+        "Prefer respectful and formal phrasing when relevant.",
+        "If useful, organize the text into short paragraphs for readability.",
+        "Make the message sound serious, composed, and ready to send in a professional context.",
+        "Do not sound robotic, overly legalistic, or theatrical."
       ].join(" ");
 
     case "persuasive":
       return [
         "Tone style: persuasive.",
-        "Rewrite to make the message more convincing, purposeful, and impactful.",
-        "Strengthen the phrasing and intent while staying truthful.",
-        "Make the request or statement sound more compelling and more deliberate.",
-        "Keep the message human and credible.",
-        "Do not manipulate, exaggerate, or invent facts."
+        "Rewrite to maximize the chance of getting a positive response or action.",
+        "Make the message more compelling, purposeful, and action-oriented.",
+        "Strengthen the request, clarify the desired outcome, and make the call to action more explicit.",
+        "Use psychologically effective but natural phrasing: confident, engaging, and concrete.",
+        "Highlight relevance, benefit, importance, or urgency only if already supported by the original message.",
+        "Make the recipient more likely to respond, agree, or act.",
+        "Do not invent facts, do not threaten, do not guilt-trip, and do not manipulate dishonestly."
       ].join(" ");
 
     case "concise":
@@ -138,9 +141,11 @@ function buildOptToneInstructions(tone = "neutral") {
     default:
       return [
         "Tone style: neutral.",
-        "Rewrite in a natural, clear, smooth, and balanced way.",
-        "Improve readability and fluency without making the text too formal.",
-        "Keep the message simple, natural, and directly usable."
+        "Rewrite in a natural, fluid, clear, and human way.",
+        "Improve readability and correctness without making the text notably more formal.",
+        "Keep the tone simple, balanced, and everyday-professional.",
+        "Do not over-structure the message unless clearly needed.",
+        "Avoid making it sound too polished, too corporate, or too ceremonial."
       ].join(" ");
   }
 }
