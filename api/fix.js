@@ -7,11 +7,28 @@ function getClient() {
 }
 
 /* ---------------------------------- */
+/*  Constants */
+/* ---------------------------------- */
+
+const ALLOWED_MODES = new Set(["cor", "opt"]);
+const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise"]);
+
+/* ---------------------------------- */
 /*  Utilities */
 /* ---------------------------------- */
 
+function sanitizeMode(mode) {
+  const value = String(mode || "").toLowerCase().trim();
+  return ALLOWED_MODES.has(value) ? value : "cor";
+}
+
+function sanitizeTone(tone) {
+  const value = String(tone || "").toLowerCase().trim();
+  return ALLOWED_TONES.has(value) ? value : "neutral";
+}
+
 function extractNumbers(text = "") {
-  return (text.match(/\b\d+[a-zA-Z]*\b/g) || []).sort();
+  return (String(text).match(/\b\d+[a-zA-Z]*\b/g) || []).sort();
 }
 
 function numbersChanged(a, b) {
@@ -34,8 +51,22 @@ function tooDifferent(a = "", b = "") {
   if (!la || !lb) return false;
 
   const diff = Math.abs(lb - la) / la;
-
   return diff > 0.35;
+}
+
+function optLooksSuspicious(a = "", b = "") {
+  const input = String(a || "").trim();
+  const output = String(b || "").trim();
+
+  if (!input || !output) return true;
+
+  const la = input.length;
+  const lb = output.length;
+
+  if (lb < Math.max(12, la * 0.35)) return true;
+  if (lb > la * 2.2 + 80) return true;
+
+  return false;
 }
 
 /* ---------------------------------- */
@@ -43,11 +74,10 @@ function tooDifferent(a = "", b = "") {
 /* ---------------------------------- */
 
 function protectTokens(text = "") {
-
   const map = {};
   let i = 0;
 
-  const protectedText = text.replace(
+  const protectedText = String(text).replace(
     /\b([A-Z]{2,}|\d+[a-zA-Z]*|[A-Za-z]*\d+[A-Za-z0-9-]*)\b/g,
     (match) => {
       const key = `__GLTOK${i++}__`;
@@ -60,8 +90,7 @@ function protectTokens(text = "") {
 }
 
 function restoreTokens(text = "", map = {}) {
-
-  let out = text;
+  let out = String(text || "");
 
   for (const key in map) {
     out = out.replaceAll(key, map[key]);
@@ -74,19 +103,64 @@ function restoreTokens(text = "", map = {}) {
 /*  Prompt builders */
 /* ---------------------------------- */
 
-function buildSystemPrompt(mode = "cor", tone = "default") {
+function buildOptToneInstructions(tone = "neutral") {
+  switch (tone) {
+    case "professional":
+      return [
+        "Tone style: professional.",
+        "Rewrite in a polished, professional, credible, and well-structured way.",
+        "Use clean phrasing and appropriate business-style wording when relevant.",
+        "You may split the text into short paragraphs if that improves readability.",
+        "Keep the message respectful and serious.",
+        "Do not sound stiff, robotic, overly legal, or theatrical."
+      ].join(" ");
 
+    case "persuasive":
+      return [
+        "Tone style: persuasive.",
+        "Rewrite to make the message more convincing, purposeful, and impactful.",
+        "Strengthen the phrasing and intent while staying truthful.",
+        "Make the request or statement sound more compelling and more deliberate.",
+        "Keep the message human and credible.",
+        "Do not manipulate, exaggerate, or invent facts."
+      ].join(" ");
+
+    case "concise":
+      return [
+        "Tone style: concise.",
+        "Rewrite to make the message shorter, sharper, and more direct.",
+        "Remove filler, repetition, hesitation, and soft phrasing.",
+        "Keep only what is useful, clear, and necessary.",
+        "Preserve basic politeness but avoid verbosity."
+      ].join(" ");
+
+    case "neutral":
+    default:
+      return [
+        "Tone style: neutral.",
+        "Rewrite in a natural, clear, smooth, and balanced way.",
+        "Improve readability and fluency without making the text too formal.",
+        "Keep the message simple, natural, and directly usable."
+      ].join(" ");
+  }
+}
+
+function buildSystemPrompt(mode = "cor", tone = "neutral") {
   if (mode === "opt") {
     return [
       "You are Greenlight in OPT mode.",
-      "Rewrite the text to improve clarity, fluency, professionalism, and impact.",
-      "Preserve the original meaning and intent.",
-      "Fix spelling, grammar, punctuation, accents, and typography.",
+      "Your task is to rewrite the text so it is better written while preserving the original meaning, intent, and factual content.",
+      "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
       "",
-      "Rules:",
+      "Core rules:",
       "- Do not introduce new information.",
-      "- Do not modify numbers, product names, or technical identifiers.",
-      "- Maintain the same factual meaning.",
+      "- Do not change facts.",
+      "- Do not modify numbers, product names, model names, or technical identifiers.",
+      "- Preserve the original intent.",
+      "- Keep the output directly usable by the user.",
+      "- Prefer strong wording differences only when they match the selected tone.",
+      "",
+      buildOptToneInstructions(tone),
       "",
       "Return ONLY the rewritten text."
     ].join(" ");
@@ -123,14 +197,15 @@ function buildSystemPrompt(mode = "cor", tone = "default") {
 }
 
 function buildUserPrompt({ text, lang, mode, tone }) {
-
   return [
-    `Mode: ${mode || "cor"}`,
-    `Tone: ${tone || "default"}`,
+    `Mode: ${mode}`,
+    `Tone: ${tone}`,
     `Language: ${lang || "auto"}`,
     "",
-    "Task:",
-    "Return only the corrected or optimized text.",
+    mode === "opt"
+      ? "Task: rewrite the text according to the selected tone, while preserving meaning and facts."
+      : "Task: correct the text strictly without changing meaning.",
+    "Return only the final text.",
     "Do not include explanations.",
     "",
     "Text:",
@@ -143,7 +218,6 @@ function buildUserPrompt({ text, lang, mode, tone }) {
 /* ---------------------------------- */
 
 export default async function handler(req, res) {
-
   if (req.method !== "POST") {
     res.status(405).json({ error: "POST only" });
     return;
@@ -152,9 +226,9 @@ export default async function handler(req, res) {
   const { text, lang, mode, tone } = req.body || {};
 
   const input = (text ?? "").toString();
-  const language = (lang ?? "auto").toString();
-  const currentMode = (mode ?? "cor").toString();
-  const currentTone = (tone ?? "default").toString();
+  const language = (lang ?? "auto").toString().trim() || "auto";
+  const currentMode = sanitizeMode(mode);
+  const currentTone = sanitizeTone(tone);
 
   if (!input.trim()) {
     res.status(200).json({
@@ -176,25 +250,15 @@ export default async function handler(req, res) {
   }
 
   try {
-
-    /* ------------------------------- */
-    /* Protect sensitive tokens */
-    /* ------------------------------- */
-
     const { protectedText, map } = protectTokens(input);
 
     const system = buildSystemPrompt(currentMode, currentTone);
-
     const user = buildUserPrompt({
       text: protectedText,
       lang: language,
       mode: currentMode,
       tone: currentTone
     });
-
-    /* ------------------------------- */
-    /* Call LLM */
-    /* ------------------------------- */
 
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
@@ -217,15 +281,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    /* ------------------------------- */
-    /* Restore tokens */
-    /* ------------------------------- */
-
-    out = restoreTokens(out, map);
-
-    /* ------------------------------- */
-    /* Safety checks */
-    /* ------------------------------- */
+    out = restoreTokens(out, map).trim();
 
     if (numbersChanged(input, out)) {
       res.status(200).json({
@@ -236,7 +292,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (tooDifferent(input, out)) {
+    if (currentMode === "cor" && tooDifferent(input, out)) {
       res.status(200).json({
         text: input,
         blocked: true,
@@ -245,22 +301,27 @@ export default async function handler(req, res) {
       return;
     }
 
-    /* ------------------------------- */
-    /* Debug log (optional) */
-    /* ------------------------------- */
+    if (currentMode === "opt" && optLooksSuspicious(input, out)) {
+      res.status(200).json({
+        text: input,
+        blocked: true,
+        reason: "suspicious_opt_output"
+      });
+      return;
+    }
 
     console.log("GL FIX", {
-      input,
-      output: out
+      mode: currentMode,
+      tone: currentTone,
+      inputLength: input.length,
+      outputLength: out.length
     });
 
     res.status(200).json({
       text: out,
       blocked: false
     });
-
   } catch (e) {
-
     console.error("GL FIX ERROR", e);
 
     res.status(200).json({
@@ -268,6 +329,5 @@ export default async function handler(req, res) {
       blocked: true,
       reason: "exception"
     });
-
   }
 }
