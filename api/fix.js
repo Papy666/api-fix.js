@@ -161,7 +161,7 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
       "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
 	  "Always return a complete rewritten version of the full input text.",
 	  "Never return partial text.",
-	  "Never truncate the response."
+	  "Never truncate the response.",
       "",
       "Core rules:",
       "- Do not introduce new information.",
