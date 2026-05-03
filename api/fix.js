@@ -340,6 +340,7 @@ export default async function handler(req, res) {
       user,
       mode: currentMode
     });
+	console.log("GL GEMINI RAW RESPONSE", response);
 
     if (response.error) {
       res.status(200).json({
@@ -351,6 +352,11 @@ export default async function handler(req, res) {
     }
 
     let out = String(response.text || "").trim();
+	console.log("GL COMPARE", {
+  input,
+  out,
+  same: input.trim() === out.trim()
+});
 
     if (!out) {
       res.status(200).json({
