@@ -1,10 +1,13 @@
-import { GoogleGenAI } from "@google/genai";
+/* ---------------------------------- */
+/*  Gemini REST config */
+/* ---------------------------------- */
 
-function getClient() {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return null;
-  return new GoogleGenAI({ apiKey: key });
+function getApiKey() {
+  return process.env.GEMINI_API_KEY || null;
 }
+
+// Stable pour debug/prod. Tu pourras remettre "gemini-3-flash-preview" après.
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 /* ---------------------------------- */
 /*  Constants */
@@ -12,8 +15,6 @@ function getClient() {
 
 const ALLOWED_MODES = new Set(["cor", "opt"]);
 const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise"]);
-
-const GEMINI_MODEL = "gemini-2.5-flash";
 
 /* ---------------------------------- */
 /*  Utilities */
@@ -195,7 +196,7 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
     "Important:",
     "- Never modify numbers.",
     "- Never modify model names or product identifiers.",
-    "- Never modify technical tokens (API, USB-C, RTX4090, etc).",
+    "- Never modify technical tokens like API, USB-C, RTX4090, etc.",
     "",
     "If something is unclear, leave it unchanged.",
     "",
@@ -220,8 +221,71 @@ function buildUserPrompt({ text, lang, mode, tone }) {
   ].join("\n");
 }
 
-function extractGeminiText(response) {
-  return String(response?.text || "").trim();
+/* ---------------------------------- */
+/*  Gemini REST call */
+/* ---------------------------------- */
+
+async function callGemini({ system, user, mode }) {
+  const key = getApiKey();
+
+  if (!key) {
+    return {
+      error: "missing_api_key"
+    };
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: system }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: user }]
+        }
+      ],
+      generationConfig: {
+        temperature: mode === "cor" ? 0 : 0.3,
+        topP: 0.9,
+        maxOutputTokens: 120
+      }
+    })
+  });
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    console.error("GEMINI API ERROR", {
+      status: response.status,
+      statusText: response.statusText,
+      data
+    });
+
+    return {
+      error: data?.error?.message || `gemini_http_${response.status}`
+    };
+  }
+
+  const text =
+    data?.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || "")
+      .join("")
+      .trim() || "";
+
+  return { text };
 }
 
 /* ---------------------------------- */
@@ -249,9 +313,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const client = getClient();
+  const apiKey = getApiKey();
 
-  if (!client) {
+  if (!apiKey) {
     res.status(200).json({
       text: input,
       blocked: true,
@@ -271,18 +335,22 @@ export default async function handler(req, res) {
       tone: currentTone
     });
 
-    const response = await client.models.generateContent({
-  model: GEMINI_MODEL,
-  contents: user,
-  config: {
-    systemInstruction: system,
-    temperature: currentMode === "cor" ? 0 : 0.3,
-    topP: 0.9,
-    maxOutputTokens: 120
-  }
-});
+    const response = await callGemini({
+      system,
+      user,
+      mode: currentMode
+    });
 
-    let out = extractGeminiText(response);
+    if (response.error) {
+      res.status(200).json({
+        text: input,
+        blocked: true,
+        reason: response.error
+      });
+      return;
+    }
+
+    let out = String(response.text || "").trim();
 
     if (!out) {
       res.status(200).json({
@@ -323,7 +391,7 @@ export default async function handler(req, res) {
     }
 
     console.log("GL FIX", {
-      provider: "gemini",
+      provider: "gemini_rest",
       model: GEMINI_MODEL,
       mode: currentMode,
       tone: currentTone,
@@ -336,12 +404,15 @@ export default async function handler(req, res) {
       blocked: false
     });
   } catch (e) {
-    console.error("GL FIX ERROR", e);
+    console.error("GL FIX ERROR MESSAGE", e?.message);
+    console.error("GL FIX ERROR NAME", e?.name);
+    console.error("GL FIX ERROR STACK", e?.stack);
 
     res.status(200).json({
       text: input,
       blocked: true,
-      reason: "exception"
+      reason: "exception",
+      detail: e?.message || "unknown_error"
     });
   }
 }
