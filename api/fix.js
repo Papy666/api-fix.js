@@ -159,6 +159,9 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
       "You are Flexo in OPT mode.",
       "Your task is to rewrite the text so it is better written while preserving the original meaning, intent, and factual content.",
       "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
+	  "Always return a complete rewritten version of the full input text.",
+	  "Never return partial text.",
+	  "Never truncate the response."
       "",
       "Core rules:",
       "- Do not introduce new information.",
@@ -215,6 +218,7 @@ function buildUserPrompt({ text, lang, mode, tone }) {
       : "Task: correct the text strictly without changing meaning.",
     "Return only the final text.",
     "Do not include explanations.",
+	"The output must be similar in length to the input.",
     "",
     "Text:",
     String(text || "")
@@ -254,7 +258,7 @@ async function callGemini({ system, user, mode }) {
       generationConfig: {
         temperature: mode === "cor" ? 0 : 0.3,
         topP: 0.9,
-        maxOutputTokens: 120
+        maxOutputTokens: 300
       }
     })
   });
