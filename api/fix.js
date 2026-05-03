@@ -1,9 +1,9 @@
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
 function getClient() {
-  const key = process.env.OPENAI_API_KEY;
+  const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
-  return new OpenAI({ apiKey: key });
+  return new GoogleGenAI({ apiKey: key });
 }
 
 /* ---------------------------------- */
@@ -12,6 +12,8 @@ function getClient() {
 
 const ALLOWED_MODES = new Set(["cor", "opt"]);
 const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise"]);
+
+const GEMINI_MODEL = "gemini-3-flash-preview";
 
 /* ---------------------------------- */
 /*  Utilities */
@@ -153,7 +155,7 @@ function buildOptToneInstructions(tone = "neutral") {
 function buildSystemPrompt(mode = "cor", tone = "neutral") {
   if (mode === "opt") {
     return [
-      "You are Greenlight in OPT mode.",
+      "You are Flexo in OPT mode.",
       "Your task is to rewrite the text so it is better written while preserving the original meaning, intent, and factual content.",
       "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
       "",
@@ -172,7 +174,7 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
   }
 
   return [
-    "You are Greenlight in COR mode.",
+    "You are Flexo in COR mode.",
     "You are a strict text correction engine.",
     "",
     "Your task is to correct:",
@@ -216,6 +218,10 @@ function buildUserPrompt({ text, lang, mode, tone }) {
     "Text:",
     String(text || "")
   ].join("\n");
+}
+
+function extractGeminiText(response) {
+  return String(response?.text || "").trim();
 }
 
 /* ---------------------------------- */
@@ -265,17 +271,21 @@ export default async function handler(req, res) {
       tone: currentTone
     });
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      top_p: 0.9,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ]
+    const response = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: user,
+      config: {
+        systemInstruction: system,
+        temperature: currentMode === "cor" ? 0 : 0.3,
+        topP: 0.9,
+        maxOutputTokens: 120,
+        thinkingConfig: {
+          thinkingLevel: "MINIMAL"
+        }
+      }
     });
 
-    let out = (completion.choices?.[0]?.message?.content || "").trim();
+    let out = extractGeminiText(response);
 
     if (!out) {
       res.status(200).json({
@@ -316,6 +326,8 @@ export default async function handler(req, res) {
     }
 
     console.log("GL FIX", {
+      provider: "gemini",
+      model: GEMINI_MODEL,
       mode: currentMode,
       tone: currentTone,
       inputLength: input.length,
