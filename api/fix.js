@@ -7,7 +7,7 @@ function getApiKey() {
 }
 
 // Stable pour debug/prod. Tu pourras remettre "gemini-3-flash-preview" après.
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 /* ---------------------------------- */
 /*  Constants */
@@ -173,7 +173,7 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
       "",
       buildOptToneInstructions(tone),
       "",
-      "Return ONLY the rewritten text."
+      "Return the full corrected text from beginning to end. Do not stop early. Do not return only the beginning."
     ].join(" ");
   }
 
@@ -258,7 +258,7 @@ async function callGemini({ system, user, mode }) {
       generationConfig: {
         temperature: mode === "cor" ? 0 : 0.3,
         topP: 0.9,
-        maxOutputTokens: 300
+        maxOutputTokens: 256
       }
     })
   });
