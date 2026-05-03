@@ -13,7 +13,7 @@ function getClient() {
 const ALLOWED_MODES = new Set(["cor", "opt"]);
 const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise"]);
 
-const GEMINI_MODEL = "gemini-3-flash-preview";
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 /* ---------------------------------- */
 /*  Utilities */
@@ -272,18 +272,15 @@ export default async function handler(req, res) {
     });
 
     const response = await client.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: user,
-      config: {
-        systemInstruction: system,
-        temperature: currentMode === "cor" ? 0 : 0.3,
-        topP: 0.9,
-        maxOutputTokens: 120,
-        thinkingConfig: {
-          thinkingLevel: "MINIMAL"
-        }
-      }
-    });
+  model: GEMINI_MODEL,
+  contents: user,
+  config: {
+    systemInstruction: system,
+    temperature: currentMode === "cor" ? 0 : 0.3,
+    topP: 0.9,
+    maxOutputTokens: 120
+  }
+});
 
     let out = extractGeminiText(response);
 
