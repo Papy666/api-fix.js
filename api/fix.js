@@ -1,16 +1,10 @@
-/* ---------------------------------- */
-/*  Gemini REST config */
-/* ---------------------------------- */
+import OpenAI from "openai";
 
-function getApiKey() {
-  return process.env.GEMINI_API_KEY || null;
+function getClient() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  return new OpenAI({ apiKey: key });
 }
-
-const GEMINI_MODEL_COR =
-  process.env.GEMINI_MODEL_COR || "gemini-2.5-flash-lite";
-
-const GEMINI_MODEL_OPT =
-  process.env.GEMINI_MODEL_OPT || "gemini-3-flash-preview";
 
 /* ---------------------------------- */
 /*  Constants */
@@ -31,10 +25,6 @@ function sanitizeMode(mode) {
 function sanitizeTone(tone) {
   const value = String(tone || "").toLowerCase().trim();
   return ALLOWED_TONES.has(value) ? value : "neutral";
-}
-
-function getModelForMode(mode) {
-  return mode === "opt" ? GEMINI_MODEL_OPT : GEMINI_MODEL_COR;
 }
 
 function extractNumbers(text = "") {
@@ -60,7 +50,8 @@ function tooDifferent(a = "", b = "") {
 
   if (!la || !lb) return false;
 
-  return Math.abs(lb - la) / la > 0.35;
+  const diff = Math.abs(lb - la) / la;
+  return diff > 0.35;
 }
 
 function optLooksSuspicious(a = "", b = "") {
@@ -72,8 +63,8 @@ function optLooksSuspicious(a = "", b = "") {
   const la = input.length;
   const lb = output.length;
 
-  if (lb < Math.max(10, la * 0.30)) return true;
-  if (lb > la * 2.0 + 100) return true;
+  if (lb < Math.max(12, la * 0.35)) return true;
+  if (lb > la * 2.2 + 80) return true;
 
   return false;
 }
@@ -116,36 +107,45 @@ function buildOptToneInstructions(tone = "neutral") {
   switch (tone) {
     case "professional":
       return [
-        "Tone: professional.",
-        "Make the text clearer, cleaner, more structured, and professionally usable.",
-        "Use serious and credible wording.",
-        "Do not make it pompous, theatrical, legalistic, or excessively corporate."
+        "Tone style: professional.",
+        "Rewrite in a polished, structured, professional, and credible tone.",
+        "Use clear, well-formed sentences and appropriate business wording.",
+        "Prefer respectful and formal phrasing when relevant.",
+        "If useful, organize the text into short paragraphs for readability.",
+        "Make the message sound serious, composed, and ready to send in a professional context.",
+        "Do not sound robotic, overly legalistic, or theatrical."
       ].join(" ");
 
     case "persuasive":
       return [
-        "Tone: persuasive.",
-        "Make the text more convincing and action-oriented.",
-        "Clarify the request and strengthen the call to action.",
-        "Only highlight benefits, urgency, or importance if already implied by the original text.",
-        "Do not invent facts. Do not manipulate dishonestly."
+        "Tone style: persuasive.",
+        "Rewrite to maximize the chance of getting a positive response or action.",
+        "Make the message more compelling, purposeful, and action-oriented.",
+        "Strengthen the request, clarify the desired outcome, and make the call to action more explicit.",
+        "Use psychologically effective but natural phrasing: confident, engaging, and concrete.",
+        "Highlight relevance, benefit, importance, or urgency only if already supported by the original message.",
+        "Make the recipient more likely to respond, agree, or act.",
+        "Do not invent facts, do not threaten, do not guilt-trip, and do not manipulate dishonestly."
       ].join(" ");
 
     case "concise":
       return [
-        "Tone: concise.",
-        "Make the text shorter, sharper, and more direct.",
-        "Remove filler, repetition, hesitation, and unnecessary softness.",
-        "Preserve politeness when useful."
+        "Tone style: concise.",
+        "Rewrite to make the message shorter, sharper, and more direct.",
+        "Remove filler, repetition, hesitation, and soft phrasing.",
+        "Keep only what is useful, clear, and necessary.",
+        "Preserve basic politeness but avoid verbosity."
       ].join(" ");
 
     case "neutral":
     default:
       return [
-        "Tone: neutral.",
-        "Make the text natural, clear, fluid, and easy to read.",
-        "Do not make it much more formal.",
-        "Do not over-polish it."
+        "Tone style: neutral.",
+        "Rewrite in a natural, fluid, clear, and human way.",
+        "Improve readability and correctness without making the text notably more formal.",
+        "Keep the tone simple, balanced, and everyday-professional.",
+        "Do not over-structure the message unless clearly needed.",
+        "Avoid making it sound too polished, too corporate, or too ceremonial."
       ].join(" ");
   }
 }
@@ -154,56 +154,51 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
   if (mode === "opt") {
     return [
       "You are Flexo in OPT mode.",
-      "You rewrite user text for clarity and style.",
+      "Your task is to rewrite the text so it is better written while preserving the original meaning, intent, and factual content.",
+      "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
       "",
-      "Absolute rules:",
-      "- Preserve the original meaning.",
+      "Core rules:",
+      "- Do not introduce new information.",
+      "- Do not change facts.",
+      "- Do not modify numbers, product names, model names, or technical identifiers.",
       "- Preserve the original intent.",
-      "- Preserve the original tone direction unless the selected tone explicitly changes it.",
-      "- Preserve all facts.",
-      "- Preserve all numbers.",
-      "- Preserve all names, products, models, brands, technical terms, IDs, URLs, emails, commands, and code-like tokens.",
-      "- Do not add information.",
-      "- Do not remove important information.",
-      "- Do not moralize.",
-      "- Do not explain.",
-      "- Do not answer the message.",
-      "- Do not continue the conversation.",
-      "- Return only the rewritten text.",
+      "- Keep the output directly usable by the user.",
+      "- The selected tone must create a clearly noticeable stylistic difference in the output.",
       "",
-      "Length rule:",
-      "- Output must normally be close to the input length.",
-      "- Concise mode may be shorter.",
-      "- Do not return a summary unless the input itself asks for one.",
-      "- Never truncate.",
-      "- Always return the full rewritten text.",
+      buildOptToneInstructions(tone),
       "",
-      buildOptToneInstructions(tone)
-    ].join("\n");
+      "Return ONLY the rewritten text."
+    ].join(" ");
   }
 
   return [
     "You are Flexo in COR mode.",
-    "You are a strict correction engine.",
+    "You are a strict text correction engine.",
     "",
-    "Task:",
-    "Correct only spelling, grammar, punctuation, accents, apostrophes, capitalization, spacing, and typography.",
+    "Your task is to correct:",
+    "- spelling",
+    "- grammar",
+    "- punctuation",
+    "- accents",
+    "- apostrophes",
+    "- capitalization",
+    "- spacing and typography",
     "",
-    "Absolute rules:",
-    "- Preserve the exact meaning.",
-    "- Do not rewrite for style.",
-    "- Do not improve the text beyond correction.",
-    "- Do not paraphrase unless grammatically necessary.",
+    "Rules:",
+    "- Preserve the meaning.",
+    "- Do not paraphrase unnecessarily.",
     "- Do not replace words with synonyms unless required for grammar.",
-    "- Do not add information.",
-    "- Do not remove information.",
-    "- Do not interpret unclear text.",
-    "- If something is unclear, leave it unchanged.",
-    "- Preserve all numbers.",
-    "- Preserve all names, products, models, brands, technical terms, IDs, URLs, emails, commands, and code-like tokens.",
-    "- Return only the corrected text.",
-    "- Never explain."
-  ].join("\n");
+    "- Do not interpret unclear tokens.",
+    "",
+    "Important:",
+    "- Never modify numbers.",
+    "- Never modify model names or product identifiers.",
+    "- Never modify technical tokens (API, USB-C, RTX4090, etc).",
+    "",
+    "If something is unclear, leave it unchanged.",
+    "",
+    "Return ONLY the corrected text."
+  ].join(" ");
 }
 
 function buildUserPrompt({ text, lang, mode, tone }) {
@@ -213,94 +208,14 @@ function buildUserPrompt({ text, lang, mode, tone }) {
     `Language: ${lang || "auto"}`,
     "",
     mode === "opt"
-      ? "Rewrite the following text according to the selected tone. Preserve meaning, facts, and intent."
-      : "Correct the following text strictly. Do not change meaning or style.",
-    "",
+      ? "Task: rewrite the text according to the selected tone, while preserving meaning and facts."
+      : "Task: correct the text strictly without changing meaning.",
     "Return only the final text.",
+    "Do not include explanations.",
     "",
     "Text:",
     String(text || "")
   ].join("\n");
-}
-
-/* ---------------------------------- */
-/*  Gemini REST call */
-/* ---------------------------------- */
-
-async function callGemini({ system, user, mode }) {
-  const key = getApiKey();
-
-  if (!key) {
-    return { error: "missing_api_key" };
-  }
-
-  const model = getModelForMode(mode);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-
-  const generationConfig = {
-    temperature: mode === "cor" ? 0 : 0.15,
-    topP: mode === "cor" ? 0.1 : 0.7,
-    maxOutputTokens: 768
-  };
-
-  if (model.startsWith("gemini-3")) {
-    generationConfig.thinkingConfig = {
-      thinkingLevel: "minimal"
-    };
-  } else if (model.startsWith("gemini-2.5-flash")) {
-    generationConfig.thinkingConfig = {
-      thinkingBudget: 0
-    };
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: system }]
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: user }]
-        }
-      ],
-      generationConfig
-    })
-  });
-
-  let data = null;
-
-  try {
-    data = await response.json();
-  } catch {
-    data = null;
-  }
-
-  if (!response.ok) {
-    console.error("GEMINI API ERROR", {
-      status: response.status,
-      statusText: response.statusText,
-      model,
-      data
-    });
-
-    return {
-      error: data?.error?.message || `gemini_http_${response.status}`
-    };
-  }
-
-  const text =
-    data?.candidates?.[0]?.content?.parts
-      ?.filter((part) => !part.thought)
-      ?.map((part) => part.text || "")
-      ?.join("")
-      ?.trim() || "";
-
-  return { text, model };
 }
 
 /* ---------------------------------- */
@@ -328,7 +243,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!getApiKey()) {
+  const client = getClient();
+
+  if (!client) {
     res.status(200).json({
       text: input,
       blocked: true,
@@ -348,24 +265,17 @@ export default async function handler(req, res) {
       tone: currentTone
     });
 
-    const response = await callGemini({
-      system,
-      user,
-      mode: currentMode
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      top_p: 0.9,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ]
     });
 
-    console.log("GL GEMINI RAW RESPONSE", response);
-
-    if (response.error) {
-      res.status(200).json({
-        text: input,
-        blocked: true,
-        reason: response.error
-      });
-      return;
-    }
-
-    let out = String(response.text || "").trim();
+    let out = (completion.choices?.[0]?.message?.content || "").trim();
 
     if (!out) {
       res.status(200).json({
@@ -377,15 +287,6 @@ export default async function handler(req, res) {
     }
 
     out = restoreTokens(out, map).trim();
-
-    console.log("GL COMPARE", {
-      model: response.model,
-      mode: currentMode,
-      tone: currentTone,
-      inputLength: input.length,
-      outputLength: out.length,
-      same: input.trim() === out.trim()
-    });
 
     if (numbersChanged(input, out)) {
       res.status(200).json({
@@ -415,8 +316,6 @@ export default async function handler(req, res) {
     }
 
     console.log("GL FIX", {
-      provider: "gemini_rest",
-      model: response.model,
       mode: currentMode,
       tone: currentTone,
       inputLength: input.length,
@@ -428,15 +327,12 @@ export default async function handler(req, res) {
       blocked: false
     });
   } catch (e) {
-    console.error("GL FIX ERROR MESSAGE", e?.message);
-    console.error("GL FIX ERROR NAME", e?.name);
-    console.error("GL FIX ERROR STACK", e?.stack);
+    console.error("GL FIX ERROR", e);
 
     res.status(200).json({
       text: input,
       blocked: true,
-      reason: "exception",
-      detail: e?.message || "unknown_error"
+      reason: "exception"
     });
   }
 }
