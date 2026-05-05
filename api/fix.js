@@ -19,7 +19,16 @@ const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise
 
 function sanitizeMode(mode) {
   const value = String(mode || "").toLowerCase().trim();
-  return ALLOWED_MODES.has(value) ? value : "cor";
+
+  if (["opt", "optimise", "optimize", "optimization", "ameliorer", "améliorer"].includes(value)) {
+    return "opt";
+  }
+
+  if (["cor", "correct", "correction", "fix"].includes(value)) {
+    return "cor";
+  }
+
+  return "cor";
 }
 
 function sanitizeTone(tone) {
@@ -229,6 +238,12 @@ export default async function handler(req, res) {
   }
 
   const { text, lang, mode, tone } = req.body || {};
+  console.log("REQ BODY", {
+  mode,
+  tone,
+  lang,
+  textLength: String(text || "").length
+});
 
   const input = (text ?? "").toString();
   const language = (lang ?? "auto").toString().trim() || "auto";
