@@ -1,4 +1,4 @@
-gpt-4o-miniimport OpenAI from "openai";
+import OpenAI from "openai";
 
 /* ---------------------------------- */
 /*  OpenAI config */
