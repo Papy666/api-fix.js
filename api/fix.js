@@ -247,8 +247,19 @@ export default async function handler(req, res) {
 
   const input = (text ?? "").toString();
   const language = (lang ?? "auto").toString().trim() || "auto";
-  const currentMode = sanitizeMode(mode);
   const currentTone = sanitizeTone(tone);
+  const rawMode = sanitizeMode(mode);
+
+  const currentMode =
+    rawMode === "cor" && currentTone !== "neutral"
+      ? "opt"
+      : rawMode;
+	console.log("MODE RESOLVED", {
+  receivedMode: mode,
+  receivedTone: tone,
+  resolvedMode: currentMode,
+  resolvedTone: currentTone
+});
 
   if (!input.trim()) {
     res.status(200).json({
