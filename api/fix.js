@@ -1,17 +1,31 @@
 import OpenAI from "openai";
 
+/* ---------------------------------- */
+/*  OpenAI config */
+/* ---------------------------------- */
+
 function getClient() {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
-  return new OpenAI({ apiKey: key });
+
+  return new OpenAI({
+    apiKey: key,
+    timeout: 12000
+  });
 }
+
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 /* ---------------------------------- */
 /*  Constants */
 /* ---------------------------------- */
 
-const ALLOWED_MODES = new Set(["cor", "opt"]);
-const ALLOWED_TONES = new Set(["neutral", "professional", "persuasive", "concise"]);
+const ALLOWED_TONES = new Set([
+  "neutral",
+  "professional",
+  "persuasive",
+  "concise"
+]);
 
 /* ---------------------------------- */
 /*  Utilities */
@@ -36,6 +50,20 @@ function sanitizeTone(tone) {
   return ALLOWED_TONES.has(value) ? value : "neutral";
 }
 
+function resolveMode({ mode, tone }) {
+  const rawMode = sanitizeMode(mode);
+  const currentTone = sanitizeTone(tone);
+
+  // Compat extension actuelle :
+  // si elle envoie mode=cor mais tone=concise/professional/persuasive,
+  // on considère que c'est une optimisation.
+  if (rawMode === "cor" && currentTone !== "neutral") {
+    return "opt";
+  }
+
+  return rawMode;
+}
+
 function extractNumbers(text = "") {
   return (String(text).match(/\b\d+[a-zA-Z]*\b/g) || []).sort();
 }
@@ -54,13 +82,13 @@ function numbersChanged(a, b) {
 }
 
 function tooDifferent(a = "", b = "") {
-  const la = a.length;
-  const lb = b.length;
+  const input = String(a || "").trim();
+  const output = String(b || "").trim();
 
-  if (!la || !lb) return false;
+  if (!input || !output) return false;
 
-  const diff = Math.abs(lb - la) / la;
-  return diff > 0.35;
+  const diff = Math.abs(output.length - input.length) / input.length;
+  return diff > 0.45;
 }
 
 function optLooksSuspicious(a = "", b = "") {
@@ -72,10 +100,17 @@ function optLooksSuspicious(a = "", b = "") {
   const la = input.length;
   const lb = output.length;
 
-  if (lb < Math.max(12, la * 0.35)) return true;
-  if (lb > la * 2.2 + 80) return true;
+  if (lb < Math.max(10, la * 0.25)) return true;
+  if (lb > la * 2.3 + 100) return true;
 
   return false;
+}
+
+function cleanModelOutput(text = "") {
+  return String(text || "")
+    .trim()
+    .replace(/^["“”]+|["“”]+$/g, "")
+    .trim();
 }
 
 /* ---------------------------------- */
@@ -87,7 +122,7 @@ function protectTokens(text = "") {
   let i = 0;
 
   const protectedText = String(text).replace(
-    /\b([A-Z]{2,}|\d+[a-zA-Z]*|[A-Za-z]*\d+[A-Za-z0-9-]*)\b/g,
+    /\b([A-Z]{2,}|\d+[a-zA-Z]*|[A-Za-z]*\d+[A-Za-z0-9-]*|https?:\/\/\S+|\S+@\S+\.\S+)\b/g,
     (match) => {
       const key = `__GLTOK${i++}__`;
       map[key] = match;
@@ -116,45 +151,38 @@ function buildOptToneInstructions(tone = "neutral") {
   switch (tone) {
     case "professional":
       return [
-        "Tone style: professional.",
-        "Rewrite in a polished, structured, professional, and credible tone.",
-        "Use clear, well-formed sentences and appropriate business wording.",
-        "Prefer respectful and formal phrasing when relevant.",
-        "If useful, organize the text into short paragraphs for readability.",
-        "Make the message sound serious, composed, and ready to send in a professional context.",
-        "Do not sound robotic, overly legalistic, or theatrical."
+        "Tone instruction:",
+        "Make the text more professional, clear, and credible.",
+        "Stay natural. Do not make it pompous, legalistic, or overly corporate.",
+        "Do not remove the user's intent or emotional nuance."
       ].join(" ");
 
     case "persuasive":
       return [
-        "Tone style: persuasive.",
-        "Rewrite to maximize the chance of getting a positive response or action.",
-        "Make the message more compelling, purposeful, and action-oriented.",
-        "Strengthen the request, clarify the desired outcome, and make the call to action more explicit.",
-        "Use psychologically effective but natural phrasing: confident, engaging, and concrete.",
-        "Highlight relevance, benefit, importance, or urgency only if already supported by the original message.",
-        "Make the recipient more likely to respond, agree, or act.",
-        "Do not invent facts, do not threaten, do not guilt-trip, and do not manipulate dishonestly."
+        "Tone instruction:",
+        "Make the text slightly more convincing and action-oriented.",
+        "Clarify the request or desired outcome if already present.",
+        "Do not invent arguments, facts, urgency, promises, or benefits.",
+        "Do not manipulate dishonestly."
       ].join(" ");
 
     case "concise":
       return [
-        "Tone style: concise.",
-        "Rewrite to make the message shorter, sharper, and more direct.",
-        "Remove filler, repetition, hesitation, and soft phrasing.",
-        "Keep only what is useful, clear, and necessary.",
-        "Preserve basic politeness but avoid verbosity."
+        "Tone instruction:",
+        "Make the text a bit shorter and clearer only when safe.",
+        "Remove useless filler and repetition.",
+        "Do not summarize aggressively.",
+        "Do not remove emotion, slang, anger, humor, intent, or important nuance.",
+        "Preserve the user's style as much as possible."
       ].join(" ");
 
     case "neutral":
     default:
       return [
-        "Tone style: neutral.",
-        "Rewrite in a natural, fluid, clear, and human way.",
-        "Improve readability and correctness without making the text notably more formal.",
-        "Keep the tone simple, balanced, and everyday-professional.",
-        "Do not over-structure the message unless clearly needed.",
-        "Avoid making it sound too polished, too corporate, or too ceremonial."
+        "Tone instruction:",
+        "Make the text natural, fluid, and clear.",
+        "Do not make it notably more formal.",
+        "Do not over-polish it."
       ].join(" ");
   }
 }
@@ -163,51 +191,61 @@ function buildSystemPrompt(mode = "cor", tone = "neutral") {
   if (mode === "opt") {
     return [
       "You are Flexo in OPT mode.",
-      "Your task is to rewrite the text so it is better written while preserving the original meaning, intent, and factual content.",
-      "Fix spelling, grammar, punctuation, accents, typography, and phrasing when needed.",
+      "You correct and lightly improve user text.",
       "",
-      "Core rules:",
-      "- Do not introduce new information.",
-      "- Do not change facts.",
-      "- Do not modify numbers, product names, model names, or technical identifiers.",
-      "- Preserve the original intent.",
-      "- Keep the output directly usable by the user.",
-      "- The selected tone must create a clearly noticeable stylistic difference in the output.",
+      "Priority order:",
+      "1. Correct spelling, grammar, punctuation, accents, apostrophes, spacing, and typography.",
+      "2. Preserve the original meaning exactly.",
+      "3. Preserve the original intent exactly.",
+      "4. Preserve facts, numbers, names, product names, model names, technical identifiers, URLs, emails, and code-like tokens.",
+      "5. Improve clarity only when it does not change the meaning.",
+      "6. Apply the selected tone conservatively.",
+      "",
+      "Absolute rules:",
+      "- Do not guess creatively.",
+      "- Do not reinterpret broken text.",
+      "- Do not invent missing ideas.",
+      "- Do not add new information.",
+      "- Do not remove important information.",
+      "- Do not answer the message.",
+      "- Do not continue the conversation.",
+      "- Do not moralize.",
+      "- Do not explain.",
+      "- Keep the user's roughness, intensity, slang, anger, humor, or informality when present.",
+      "- If a word is unclear, correct only obvious typos.",
+      "- If uncertain, leave the word close to the original.",
       "",
       buildOptToneInstructions(tone),
       "",
-      "Return ONLY the rewritten text."
-    ].join(" ");
+      "Return ONLY the final corrected and lightly improved text."
+    ].join("\n");
   }
 
   return [
     "You are Flexo in COR mode.",
     "You are a strict text correction engine.",
     "",
-    "Your task is to correct:",
-    "- spelling",
-    "- grammar",
-    "- punctuation",
-    "- accents",
-    "- apostrophes",
-    "- capitalization",
-    "- spacing and typography",
+    "Task:",
+    "Correct only spelling, grammar, punctuation, accents, apostrophes, capitalization, spacing, and typography.",
     "",
-    "Rules:",
-    "- Preserve the meaning.",
-    "- Do not paraphrase unnecessarily.",
+    "Absolute rules:",
+    "- Preserve the exact meaning.",
+    "- Preserve the user's style.",
+    "- Preserve roughness, slang, anger, humor, and informality.",
+    "- Do not rewrite for style.",
+    "- Do not optimize.",
+    "- Do not paraphrase unless grammatically necessary.",
     "- Do not replace words with synonyms unless required for grammar.",
-    "- Do not interpret unclear tokens.",
+    "- Do not add information.",
+    "- Do not remove information.",
+    "- Do not interpret unclear text.",
+    "- If something is unclear, leave it unchanged or close to original.",
+    "- Preserve all numbers.",
+    "- Preserve all names, products, models, brands, technical terms, IDs, URLs, emails, commands, and code-like tokens.",
     "",
-    "Important:",
-    "- Never modify numbers.",
-    "- Never modify model names or product identifiers.",
-    "- Never modify technical tokens (API, USB-C, RTX4090, etc).",
-    "",
-    "If something is unclear, leave it unchanged.",
-    "",
-    "Return ONLY the corrected text."
-  ].join(" ");
+    "Return ONLY the corrected text.",
+    "Never explain."
+  ].join("\n");
 }
 
 function buildUserPrompt({ text, lang, mode, tone }) {
@@ -217,10 +255,10 @@ function buildUserPrompt({ text, lang, mode, tone }) {
     `Language: ${lang || "auto"}`,
     "",
     mode === "opt"
-      ? "Task: rewrite the text according to the selected tone, while preserving meaning and facts."
-      : "Task: correct the text strictly without changing meaning.",
+      ? "Task: correct and lightly improve the text according to the selected tone. Preserve meaning, intent, and facts."
+      : "Task: correct the text strictly. Do not change meaning, style, or intent.",
+    "",
     "Return only the final text.",
-    "Do not include explanations.",
     "",
     "Text:",
     String(text || "")
@@ -238,28 +276,19 @@ export default async function handler(req, res) {
   }
 
   const { text, lang, mode, tone } = req.body || {};
-  console.log("REQ BODY", {
-  mode,
-  tone,
-  lang,
-  textLength: String(text || "").length
-});
 
   const input = (text ?? "").toString();
   const language = (lang ?? "auto").toString().trim() || "auto";
   const currentTone = sanitizeTone(tone);
-  const rawMode = sanitizeMode(mode);
+  const currentMode = resolveMode({ mode, tone });
 
-  const currentMode =
-    rawMode === "cor" && currentTone !== "neutral"
-      ? "opt"
-      : rawMode;
-	console.log("MODE RESOLVED", {
-  receivedMode: mode,
-  receivedTone: tone,
-  resolvedMode: currentMode,
-  resolvedTone: currentTone
-});
+  console.log("OPENAI REQ", {
+    receivedMode: mode,
+    receivedTone: tone,
+    resolvedMode: currentMode,
+    resolvedTone: currentTone,
+    textLength: input.length
+  });
 
   if (!input.trim()) {
     res.status(200).json({
@@ -292,16 +321,17 @@ export default async function handler(req, res) {
     });
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       temperature: 0,
-      top_p: 0.9,
+      top_p: 0.7,
+      max_tokens: 700,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user }
       ]
     });
 
-    let out = (completion.choices?.[0]?.message?.content || "").trim();
+    let out = cleanModelOutput(completion.choices?.[0]?.message?.content || "");
 
     if (!out) {
       res.status(200).json({
@@ -341,7 +371,8 @@ export default async function handler(req, res) {
       return;
     }
 
-    console.log("GL FIX", {
+    console.log("OPENAI FIX", {
+      model: OPENAI_MODEL,
       mode: currentMode,
       tone: currentTone,
       inputLength: input.length,
@@ -353,12 +384,17 @@ export default async function handler(req, res) {
       blocked: false
     });
   } catch (e) {
-    console.error("GL FIX ERROR", e);
+    console.error("OPENAI FIX ERROR", {
+      name: e?.name,
+      message: e?.message,
+      status: e?.status
+    });
 
     res.status(200).json({
       text: input,
       blocked: true,
-      reason: "exception"
+      reason: "exception",
+      detail: e?.message || "unknown_error"
     });
   }
 }
